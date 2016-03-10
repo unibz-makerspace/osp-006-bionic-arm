@@ -59,13 +59,13 @@ typedef enum
     ARM_NONE,
     ARM_STARTUP,
     ARM_WAIT_BUTTON,
-    ARM_RELEASE_FULL,
+    ARM_HAND_OPEN,
     ARM_CLOSE,
-    ARM_GRAB,
+    ARM_HAND_CLOSE,
     ARM_ROTATE,
     ARM_ROTATE_BACK,
     ARM_OPEN,
-    ARM_RELEASE_HALF
+    ARM_HAND_FINAL_OPEN
 
 } e_arm_state;
 
@@ -80,6 +80,18 @@ enum e_buttons_
 #endif
 
     NUM_BUTTONS
+
+};
+
+/**< Enumeration of directions */
+enum e_direction
+{
+
+    MOV_IDLE,
+    MOV_OPEN,
+    MOV_CLOSE,
+
+    NUM_DIRECTIONS
 
 };
 
@@ -115,6 +127,7 @@ typedef struct _t_arm_config
 
     t_rotation_movement swing;      /**< Arm swing movement */    
     t_rotation_movement rotation;   /**< Arm rotation movement */
+    t_rotation_movement hand;       /**< Arm hand movement */
 
 } t_arm_config;
 
@@ -134,32 +147,35 @@ typedef struct _t_servo_movement
 /*      GLOBALS         */
 /************************/
 
-t_keypad keypad;            /**< Keypad driver status */
+static t_keypad keypad;            /**< Keypad driver status */
 
-Servo arm_swing_servo;      /**< Servo motor control for the arm swing position */
-Servo arm_rotation_servo;   /**< Servo motor control for the arm rotation position */
-t_arm_config arm_config;    /**< Arm configuration (angles and timings) */
+static Servo arm_swing_servo;      /**< Servo motor control for the arm swing position */
+static Servo arm_rotation_servo;   /**< Servo motor control for the arm rotation position */
+static t_arm_config arm_config;    /**< Arm configuration (angles and timings) */
 
-t_servo_movement arm_swing;     /**< Status of the arm swing servo movement */
-t_servo_movement arm_rotation;  /**< Status of the arm rotation servo movement */
+static t_servo_movement arm_swing;     /**< Status of the arm swing servo movement */
+static t_servo_movement arm_rotation;  /**< Status of the arm rotation servo movement */
+static t_servo_movement hand;          /**< Status of the hand simple motor movement */
 
-MCP23S17 ioExpander(&SPI, 10, 0);
+static MCP23S17 ioExpander(&SPI, 10, 0);
 
 /************************/
 /*     DECLARATIONS     */
 /************************/
 
 /* Function declarations */
-void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_servo_movement *arm_swing, t_servo_movement *arm_rotation);
+void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_servo_movement *arm_swing, t_servo_movement *arm_rotation, t_servo_movement *hand);
 void arm_logic(uint32_t timestamp);
 bool servo_movement(t_servo_movement *movement, uint32_t timestamp);
+enum e_direction movement_direction(t_rotation_movement *config, t_servo_movement *movement);
 void movement_close(t_rotation_movement *config, t_servo_movement *movement);
 void movement_open(t_rotation_movement *config, t_servo_movement *movement);
 void keypad_periodic(t_keypad* keypad, uint32_t timestamp);
-void moveHand(t_keypad* keypad);
 void eeprom_write_position(uint8_t address, uint8_t position, uint8_t *prev_position);
 void servo_set_position(t_servo_movement *servo, uint8_t pos);
 bool timer_run(bool reset, uint32_t *timestamp, uint32_t *start, uint32_t timer);
+void hand_move(enum e_direction direction);
+enum e_direction hand_logic(t_keypad *keypad, t_servo_movement *hand);
 
 /************************/
 /*      FUNCTIONS       */
@@ -254,7 +270,7 @@ bool servo_movement(t_servo_movement *movement, uint32_t timestamp)
 
 }
 
-void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_servo_movement *arm_swing, t_servo_movement *arm_rotation)
+void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_servo_movement *arm_swing, t_servo_movement *arm_rotation, t_servo_movement *hand)
 {
 
     /* hardware */
@@ -266,12 +282,16 @@ void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_s
     config->swing.angle_open = 100;
     config->rotation.angle_closed = 148;
     config->rotation.angle_open = 58;
+    config->hand.angle_closed = 180;  /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
+    config->hand.angle_open = 0;      /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
 
     /* timings */
     config->swing.angle_step = 2;
     config->swing.angle_step_delay = 50000;
     config->rotation.angle_step = 1;
     config->rotation.angle_step_delay = 28000;
+    config->hand.angle_step = 1;            /* NOTE: since the motor has no feedback, keep short steps with a short delay; increase resolution (angle_open/angle_close) if needed */
+    config->hand.angle_step_delay = 10000;  /* NOTE: since the motor has no feedback, keep short steps with a short delay; increase resolution (angle_open/angle_close) if needed */
 
     /* configure the servo movement routine */
     arm_swing->step_val = config->swing.angle_step;
@@ -279,12 +299,18 @@ void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_s
     arm_swing->start = 0;
     arm_swing->angle_position = config->swing.angle_closed;
     arm_swing->angle_end = config->swing.angle_closed;
-    
+
     arm_rotation->step_val = config->rotation.angle_step;
     arm_rotation->step_delay = config->rotation.angle_step_delay;
     arm_rotation->start = 0;
     arm_rotation->angle_position = config->rotation.angle_closed;
     arm_rotation->angle_end = config->rotation.angle_closed;
+
+    hand->step_val = config->hand.angle_step;
+    hand->step_delay = config->hand.angle_step_delay;
+    hand->start = 0;
+    hand->angle_position = config->hand.angle_closed;
+    hand->angle_end = config->hand.angle_closed;
 
 }
 
@@ -298,17 +324,39 @@ void movement_open(t_rotation_movement *config, t_servo_movement *movement)
     movement->angle_end = config->angle_open;
 }
 
+enum e_direction movement_direction(t_rotation_movement *config, t_servo_movement *movement)
+{
+
+    if ((movement->angle_end = config->angle_open) &&
+        (movement->angle_position != movement->angle_end))
+    {
+        return MOV_OPEN;
+    }
+    else if ((movement->angle_end = config->angle_open) &&
+             (movement->angle_position != movement->angle_end))
+    {
+        return MOV_CLOSE;
+    }
+    else
+    {
+        return MOV_IDLE;
+    }
+
+}
+
 void arm_logic(uint32_t timestamp)
 {
 
     bool elapsed;
     bool swing_movement_done = false;
     bool rot_movement_done = false;
+    bool hand_movement_done = false;
     bool first_cycle = false;
     static e_arm_state state = ARM_STARTUP;
     static e_arm_state old_state = ARM_NONE;
     static uint8_t prev_pos_swing = 0;
     static uint8_t prev_pos_rot = 0;
+    static uint8_t prev_pos_hand = 0;
     static uint32_t timer_start = 0;
     static uint32_t timer = 0;
 
@@ -320,18 +368,21 @@ void arm_logic(uint32_t timestamp)
     /* ramp up-down the movement */
     swing_movement_done = servo_movement(&arm_swing, timestamp);
     rot_movement_done = servo_movement(&arm_rotation, timestamp);
+    hand_movement_done = servo_movement(&hand, timestamp);
 
     /* write position history when neeeded */
     if (state != ARM_STARTUP)
     {
         eeprom_write_position(0, arm_swing.angle_position, &prev_pos_swing);
         eeprom_write_position(1, arm_rotation.angle_position, &prev_pos_rot);
+        eeprom_write_position(2, hand.angle_position, &prev_pos_hand);
     }
     
     if (old_state != state)
     {
         swing_movement_done = false;
         rot_movement_done = false;
+        hand_movement_done = false;
         first_cycle = true;
     }
 
@@ -348,16 +399,20 @@ void arm_logic(uint32_t timestamp)
                 /* read from eeprom */
                 eeprom_read_position(0, &prev_pos_swing);
                 eeprom_read_position(1, &prev_pos_rot);
+                eeprom_read_position(2, &prev_pos_hand);
                 /* set servo position from the eeprom */
                 servo_set_position(&arm_swing, prev_pos_swing);
                 servo_set_position(&arm_rotation, prev_pos_rot);
+                servo_set_position(&hand, prev_pos_hand);
                 /* open the arm */
                 movement_open(&arm_config.swing, &arm_swing);
                 /* rotate the arm */
                 movement_open(&arm_config.rotation, &arm_rotation);
+                /* open the hand */
+                movement_open(&arm_config.hand, &hand);
             }
 
-            if ((swing_movement_done == true) && (rot_movement_done == true))
+            if ((swing_movement_done == true) && (rot_movement_done == true) && (hand_movement_done == true))
             {
                 /* boot phase completed */
                 state = ARM_WAIT_BUTTON;
@@ -370,13 +425,19 @@ void arm_logic(uint32_t timestamp)
             if (keypad.buttons[BUTTON_START] == true)
             {
                 /* Start pressed */
-                state = ARM_CLOSE;
+                state = ARM_HAND_OPEN;
                 timer = 500000;
             }
             break;
-        case ARM_RELEASE_FULL:
+        case ARM_HAND_OPEN:
             /* Open the hand */
-            /* TODO */
+            movement_open(&arm_config.hand, &hand);
+            if (hand_movement_done == true)
+            {
+                /* movement completed, go to next state */
+                state = ARM_CLOSE;
+                timer = 500000;
+            }
             break;
         case ARM_CLOSE:
             /* Close the arm */
@@ -394,13 +455,19 @@ void arm_logic(uint32_t timestamp)
             if (rot_movement_done == true)
             {
                 /* movement completed, go to next state */
-                state = ARM_ROTATE_BACK;
+                state = ARM_HAND_CLOSE;
                 timer = 500000;
             }
             break;
-        case ARM_GRAB:
+        case ARM_HAND_CLOSE:
             /* Close the hand */
-            /* TODO */
+            movement_close(&arm_config.hand, &hand);
+            if (hand_movement_done == true)
+            {
+                /* movement completed, go to next state */
+                state = ARM_ROTATE_BACK;
+                timer = 500000;
+            }
             break;
         case ARM_ROTATE_BACK:
             movement_open(&arm_config.rotation, &arm_rotation);
@@ -417,10 +484,18 @@ void arm_logic(uint32_t timestamp)
             if (swing_movement_done == true)
             {
                 /* movement completed, go to next state */
-                state = ARM_WAIT_BUTTON;
+                state = ARM_HAND_FINAL_OPEN;
             }
             break;
-        case ARM_RELEASE_HALF:
+        case ARM_HAND_FINAL_OPEN:
+            /* Open the hand */
+            movement_open(&arm_config.hand, &hand);
+            if (hand_movement_done == true)
+            {
+                /* movement completed, go to next state */
+                state = ARM_WAIT_BUTTON;
+                timer = 500000;
+            }
             break;
         default:
             break;
@@ -508,7 +583,7 @@ void setup()
     memset(&keypad, 0, sizeof(t_keypad));
 
     /* ARM hardware and software initialization */
-    arm_init(&arm_config, arm_swing_servo, arm_rotation_servo, &arm_swing, &arm_rotation);
+    arm_init(&arm_config, arm_swing_servo, arm_rotation_servo, &arm_swing, &arm_rotation, &hand);
 
     /* I/O init */
 #ifndef USE_IO_EXPANDER_BUTTONS
@@ -518,59 +593,86 @@ void setup()
     /* debug serial port */
     Serial.begin(9600);
 
-	ioExpander.begin();
-	ioExpander.pinMode(0, OUTPUT); // H Bridge
-	ioExpander.pinMode(1, OUTPUT); // H Bridge
-	//ioExpander.pinMode(7, OUTPUT); // Debug LED xD
+    ioExpander.begin();
+    ioExpander.pinMode(0, OUTPUT); // H Bridge
+    ioExpander.pinMode(1, OUTPUT); // H Bridge
+    //ioExpander.pinMode(7, OUTPUT); // Debug LED xD
 #ifdef USE_IO_EXPANDER_BUTTONS
-	ioExpander.pinMode(BUTTON_START_PIN + BUTTON_START, INPUT_PULLUP); // Button S1 -> swing arm
-	ioExpander.pinMode(BUTTON_START_PIN + BUTTON_HAND_OPEN, INPUT_PULLUP); // Button S2
-	ioExpander.pinMode(BUTTON_START_PIN + BUTTON_HAND_CLOSE, INPUT_PULLUP); // Button S3
+    ioExpander.pinMode(BUTTON_START_PIN + BUTTON_START, INPUT_PULLUP); // Button S1 -> swing arm
+    ioExpander.pinMode(BUTTON_START_PIN + BUTTON_HAND_OPEN, INPUT_PULLUP); // Button S2
+    ioExpander.pinMode(BUTTON_START_PIN + BUTTON_HAND_CLOSE, INPUT_PULLUP); // Button S3
 #endif
+
 }
 
-void moveHand(t_keypad *keypad) {
+void hand_move(enum e_direction direction)
+{
+    switch(direction)
+    {
+        case MOV_OPEN:
+      	    ioExpander.digitalWrite(0, HIGH);
+      	    ioExpander.digitalWrite(1, LOW);
+            break;
+        case MOV_CLOSE:
+      	    ioExpander.digitalWrite(0, LOW);
+      	    ioExpander.digitalWrite(1, HIGH);
+            break;
+        case MOV_IDLE:  /* just make it explicit for easier reading */
+        default:
+      	    ioExpander.digitalWrite(0, LOW);
+      	    ioExpander.digitalWrite(1, LOW);
+            break;
+    }
+}
+
+enum e_direction hand_logic(t_keypad *keypad, t_servo_movement *hand)
+{
+
+    /* Keypad overrides electronic intelligence :-) */
 #ifdef USE_IO_EXPANDER_BUTTONS
-	if (keypad->input[BUTTON_HAND_OPEN]) {
-		ioExpander.digitalWrite(0, HIGH);
-		ioExpander.digitalWrite(1, LOW);
-		return;
-	}
-	if (keypad->input[BUTTON_HAND_CLOSE]) {
-		ioExpander.digitalWrite(0, LOW);
-		ioExpander.digitalWrite(1, HIGH);
-		return;
-	}
+    if (keypad->input[BUTTON_HAND_OPEN])
+    {
+        return MOV_OPEN;
+    }
+    else if (keypad->input[BUTTON_HAND_CLOSE])
+    {
+        return MOV_CLOSE;
+    }
+    else
+    {
+        return MOV_IDLE;
+    }
 #endif
-	// NOP
-	ioExpander.digitalWrite(0, LOW);
-	ioExpander.digitalWrite(1, LOW);
+
+    /* otherwise movement logic is used */
+    return movement_direction(&arm_config.hand, hand);
+
 }
 
 void loop()
 {
 
     uint32_t ts = micros();
+    enum e_direction dir = MOV_IDLE;
 
     /* Input processing */
 #ifdef USE_IO_EXPANDER_BUTTONS
-	keypad.input[BUTTON_START] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_START) ? false : true;
-	keypad.input[BUTTON_HAND_OPEN] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_HAND_OPEN) ? false : true;
-	keypad.input[BUTTON_HAND_CLOSE] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_HAND_CLOSE) ? false : true;
+    keypad.input[BUTTON_START] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_START) ? false : true;
+    keypad.input[BUTTON_HAND_OPEN] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_HAND_OPEN) ? false : true;
+    keypad.input[BUTTON_HAND_CLOSE] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_HAND_CLOSE) ? false : true;
 #else
-	keypad.input[BUTTON_START] = digitalRead(BUTTON_START_PIN) ? false : true;
+    keypad.input[BUTTON_START] = digitalRead(BUTTON_START_PIN) ? false : true;
 #endif
-	moveHand(&keypad);
-    keypad_periodic(&keypad, ts); 
 
-    /* execute the main logic */
-    arm_logic(ts);
-    
+    /* execute the program logic */
+    keypad_periodic(&keypad, ts);      /* keypad */
+    arm_logic(ts);                     /* arm logic and its statemachine */
+    dir = hand_logic(&keypad, &hand);  /* hand logic */
+
     /* output processing */
-
-    /* operate the servo */
-    arm_swing_servo.write(arm_swing.angle_position);
-    arm_rotation_servo.write(arm_rotation.angle_position);
+    hand_move(dir);                                             /* operate the DC motor */
+    arm_swing_servo.write(arm_swing.angle_position);            /* operate the servo */
+    arm_rotation_servo.write(arm_rotation.angle_position);      /* operate the servo */
 
 }
 
