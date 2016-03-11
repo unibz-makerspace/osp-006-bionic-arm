@@ -332,7 +332,7 @@ enum e_direction movement_direction(t_rotation_movement *config, t_servo_movemen
     {
         return MOV_OPEN;
     }
-    else if ((movement->angle_end = config->angle_close) &&
+    else if ((movement->angle_end = config->angle_closed) &&
              (movement->angle_position != movement->angle_end))
     {
         return MOV_CLOSE;
