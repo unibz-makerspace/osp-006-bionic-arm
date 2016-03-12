@@ -278,20 +278,20 @@ void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_s
     rotation_servo.attach(8);
 
     /* positions */
-    config->swing.angle_closed = 15;
-    config->swing.angle_open = 100;
-    config->rotation.angle_closed = 148;
+    config->swing.angle_closed = 18;
+    config->swing.angle_open = 105;
+    config->rotation.angle_closed = 142;
     config->rotation.angle_open = 58;
-    config->hand.angle_closed = 180;  /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
-    config->hand.angle_open = 0;      /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
+    config->hand.angle_closed = 145;  /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
+    config->hand.angle_open = 40;      /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
 
     /* timings */
     config->swing.angle_step = 2;
-    config->swing.angle_step_delay = 50000;
+    config->swing.angle_step_delay = 55000;
     config->rotation.angle_step = 1;
     config->rotation.angle_step_delay = 28000;
     config->hand.angle_step = 1;            /* NOTE: since the motor has no feedback, keep short steps with a short delay; increase resolution (angle_open/angle_close) if needed */
-    config->hand.angle_step_delay = 10000;  /* NOTE: since the motor has no feedback, keep short steps with a short delay; increase resolution (angle_open/angle_close) if needed */
+    config->hand.angle_step_delay = 50500;  /* NOTE: since the motor has no feedback, keep short steps with a short delay; increase resolution (angle_open/angle_close) if needed */
 
     /* configure the servo movement routine */
     arm_swing->step_val = config->swing.angle_step;
@@ -327,12 +327,12 @@ void movement_open(t_rotation_movement *config, t_servo_movement *movement)
 enum e_direction movement_direction(t_rotation_movement *config, t_servo_movement *movement)
 {
 
-    if ((movement->angle_end = config->angle_open) &&
+    if ((movement->angle_end <= config->angle_open) &&
         (movement->angle_position != movement->angle_end))
     {
         return MOV_OPEN;
     }
-    else if ((movement->angle_end = config->angle_closed) &&
+    else if ((movement->angle_end >= config->angle_closed) &&
              (movement->angle_position != movement->angle_end))
     {
         return MOV_CLOSE;
@@ -431,18 +431,9 @@ void arm_logic(uint32_t timestamp)
             break;
         case ARM_HAND_OPEN:
             /* Open the hand */
+            arm_config.hand.angle_open = 0;
             movement_open(&arm_config.hand, &hand);
             if (hand_movement_done == true)
-            {
-                /* movement completed, go to next state */
-                state = ARM_CLOSE;
-                timer = 500000;
-            }
-            break;
-        case ARM_CLOSE:
-            /* Close the arm */
-            movement_close(&arm_config.swing, &arm_swing);
-            if (swing_movement_done == true)
             {
                 /* movement completed, go to next state */
                 state = ARM_ROTATE;
@@ -453,6 +444,16 @@ void arm_logic(uint32_t timestamp)
             /* Arm rotate */
             movement_close(&arm_config.rotation, &arm_rotation);
             if (rot_movement_done == true)
+            {
+                /* movement completed, go to next state */
+                state = ARM_CLOSE;
+                timer = 500000;
+            }
+            break;
+        case ARM_CLOSE:
+            /* Close the arm */
+            movement_close(&arm_config.swing, &arm_swing);
+            if (swing_movement_done == true)
             {
                 /* movement completed, go to next state */
                 state = ARM_HAND_CLOSE;
@@ -466,7 +467,7 @@ void arm_logic(uint32_t timestamp)
             {
                 /* movement completed, go to next state */
                 state = ARM_ROTATE_BACK;
-                timer = 500000;
+                timer = 800000;
             }
             break;
         case ARM_ROTATE_BACK:
@@ -489,12 +490,13 @@ void arm_logic(uint32_t timestamp)
             break;
         case ARM_HAND_FINAL_OPEN:
             /* Open the hand */
+            arm_config.hand.angle_open = 60;
             movement_open(&arm_config.hand, &hand);
             if (hand_movement_done == true)
             {
                 /* movement completed, go to next state */
                 state = ARM_WAIT_BUTTON;
-                timer = 500000;
+                timer = 800000;
             }
             break;
         default:
@@ -628,24 +630,22 @@ void hand_move(enum e_direction direction)
 enum e_direction hand_logic(t_keypad *keypad, t_servo_movement *hand)
 {
 
-    /* Keypad overrides electronic intelligence :-) */
-#ifdef USE_IO_EXPANDER_BUTTONS
-    if (keypad->input[BUTTON_HAND_OPEN])
-    {
-        return MOV_OPEN;
-    }
-    else if (keypad->input[BUTTON_HAND_CLOSE])
-    {
-        return MOV_CLOSE;
-    }
-    else
-    {
-        return MOV_IDLE;
-    }
-#endif
+    enum e_direction dir = MOV_IDLE;
 
     /* otherwise movement logic is used */
-    return movement_direction(&arm_config.hand, hand);
+    dir = movement_direction(&arm_config.hand, hand);
+    /* Keypad overrides electronic intelligence :-) */
+#ifdef USE_IO_EXPANDER_BUTTONS
+    if (keypad->input[BUTTON_HAND_OPEN] == true)
+    {
+        dir = MOV_OPEN;
+    }
+    else if (keypad->input[BUTTON_HAND_CLOSE] == true)
+    {
+        dir = MOV_CLOSE;
+    }
+#endif
+    return dir;
 
 }
 
