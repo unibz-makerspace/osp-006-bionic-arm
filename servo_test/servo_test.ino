@@ -65,8 +65,11 @@ typedef enum
     ARM_ROTATE,
     ARM_ROTATE_BACK,
     ARM_OPEN,
-    ARM_HAND_FINAL_OPEN
+    ARM_HAND_FINAL_OPEN,
 
+    /* alternative program logic here */
+    ARM_HAND_CLOSE_HALF,
+    ARM_HAND_OPEN_LOGIC_2
 } e_arm_state;
 
 /**< Enumeration of buttons */
@@ -75,8 +78,9 @@ enum e_buttons_
 
     BUTTON_START, // io expander button S1 -> swing arm
 #ifdef USE_IO_EXPANDER_BUTTONS
-	BUTTON_HAND_OPEN, // S2
-	BUTTON_HAND_CLOSE, // S3
+    BUTTON_HAND_OPEN, // S2
+    BUTTON_HAND_CLOSE, // S3
+    BUTTON_LOGIC_2_START,
 #endif
 
     NUM_BUTTONS
@@ -92,6 +96,17 @@ enum e_direction
     MOV_CLOSE,
 
     NUM_DIRECTIONS
+
+};
+
+/**< Enumeration for the available program logics */
+enum e_logics
+{
+
+    LOGIC_1,    /**< Grab the chocolate rabbit! */
+    LOGIC_2,    /**< Let's shake the hand with the user and then grab the chocolate rabbit! */
+
+    NUM_LOGICS
 
 };
 
@@ -352,6 +367,7 @@ void arm_logic(uint32_t timestamp)
     bool rot_movement_done = false;
     bool hand_movement_done = false;
     bool first_cycle = false;
+    static e_logics exec_logic = LOGIC_1;
     static e_arm_state state = ARM_STARTUP;
     static e_arm_state old_state = ARM_NONE;
     static uint8_t prev_pos_swing = 0;
@@ -427,7 +443,16 @@ void arm_logic(uint32_t timestamp)
                 /* Start pressed */
                 state = ARM_HAND_OPEN;
                 timer = 500000;
+                exec_logic = LOGIC_1;
             }
+            else if (keypad.buttons[BUTTON_LOGIC_2_START] == true)
+            {
+                /* Logic 2 start pressed */
+                state = ARM_HAND_OPEN;
+                timer = 500000;
+                exec_logic = LOGIC_2;
+            }
+
             break;
         case ARM_HAND_OPEN:
             /* Open the hand */
@@ -446,8 +471,19 @@ void arm_logic(uint32_t timestamp)
             if (rot_movement_done == true)
             {
                 /* movement completed, go to next state */
-                state = ARM_CLOSE;
-                timer = 500000;
+                switch(exec_logic)
+                {
+                    case LOGIC_2:
+                        state = ARM_HAND_CLOSE_HALF;
+                        timer = 5000000;  /* 5 secondi */
+                        break;
+
+                    case LOGIC_1:
+                    default:
+                        state = ARM_CLOSE;
+                        timer = 500000;
+                        break;
+                }
             }
             break;
         case ARM_CLOSE:
@@ -497,6 +533,29 @@ void arm_logic(uint32_t timestamp)
                 /* movement completed, go to next state */
                 state = ARM_WAIT_BUTTON;
                 timer = 800000;
+            }
+            break;
+            
+        case ARM_HAND_CLOSE_HALF:
+            arm_config.hand.angle_closed = 90;
+            movement_close(&arm_config.hand, &hand);
+            if (hand_movement_done == true)
+            {
+                /* movement completed, go to next state */
+                state = ARM_HAND_OPEN_LOGIC_2;
+                timer = 3000000;
+            }
+            break;
+
+        case ARM_HAND_OPEN_LOGIC_2:
+            /* Open the hand */
+            arm_config.hand.angle_open = 0;
+            movement_open(&arm_config.hand, &hand);
+            if (hand_movement_done == true)
+            {
+                /* movement completed, go to next state */
+                state = ARM_CLOSE;
+                timer = 5000000;  /* 5 secondi */
             }
             break;
         default:
@@ -603,6 +662,7 @@ void setup()
     ioExpander.pinMode(BUTTON_START_PIN + BUTTON_START, INPUT_PULLUP); // Button S1 -> swing arm
     ioExpander.pinMode(BUTTON_START_PIN + BUTTON_HAND_OPEN, INPUT_PULLUP); // Button S2
     ioExpander.pinMode(BUTTON_START_PIN + BUTTON_HAND_CLOSE, INPUT_PULLUP); // Button S3
+    ioExpander.pinMode(BUTTON_START_PIN + BUTTON_LOGIC_2_START, INPUT_PULLUP); // Button S4
 #endif
 
 }
@@ -660,6 +720,7 @@ void loop()
     keypad.input[BUTTON_START] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_START) ? false : true;
     keypad.input[BUTTON_HAND_OPEN] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_HAND_OPEN) ? false : true;
     keypad.input[BUTTON_HAND_CLOSE] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_HAND_CLOSE) ? false : true;
+    keypad.input[BUTTON_LOGIC_2_START] = ioExpander.digitalRead(BUTTON_START_PIN + BUTTON_LOGIC_2_START) ? false : true;
 #else
     keypad.input[BUTTON_START] = digitalRead(BUTTON_START_PIN) ? false : true;
 #endif
