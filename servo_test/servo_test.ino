@@ -294,7 +294,7 @@ void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_s
 
     /* positions */
     config->swing.angle_closed = 18;
-    config->swing.angle_open = 105;
+    config->swing.angle_open = 96;
     config->rotation.angle_closed = 142;
     config->rotation.angle_open = 58;
     config->hand.angle_closed = 145;  /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
