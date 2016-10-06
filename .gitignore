@@ -48,3 +48,8 @@ ipch/
 # Visual Studio profiler
 *.psess
 *.vsp
+
+*.zip
+PIGPIO/
+*.log
+*.bin
