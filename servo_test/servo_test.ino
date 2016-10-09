@@ -187,6 +187,7 @@ void movement_close(t_rotation_movement *config, t_servo_movement *movement);
 void movement_open(t_rotation_movement *config, t_servo_movement *movement);
 void keypad_periodic(t_keypad* keypad, uint32_t timestamp);
 void eeprom_write_position(uint8_t address, uint8_t position, uint8_t *prev_position);
+void eeprom_read_position(uint8_t address, uint8_t *prev_position);
 void servo_set_position(t_servo_movement *servo, uint8_t pos);
 bool timer_run(bool reset, uint32_t *timestamp, uint32_t *start, uint32_t timer);
 void hand_move(enum e_direction direction);
