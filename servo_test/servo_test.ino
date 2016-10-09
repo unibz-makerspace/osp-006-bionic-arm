@@ -52,6 +52,14 @@
 #endif
 #define DEBOUNCE_BUTTONS    100U * 1000U   /**< Button debounce time [us] */
 
+#if (ARDUINO_PI_GPIO >= 100)
+#define SERVO_SWING_PIN    22U // Broadcom GPIO22
+#define SERVO_ROTATION_PIN 17U // Broadcom GPIO17
+#else
+#define SERVO_SWING_PIN     9U // Arduino Digital 9
+#define SERVO_ROTATION_PIN  8U // Arduino Digital 8
+#endif
+
 /**< Enumerations for the logic state machine */
 typedef enum
 {
@@ -290,8 +298,8 @@ void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_s
 {
 
     /* hardware */
-    swing_servo.attach(9);
-    rotation_servo.attach(8);
+    swing_servo.attach(SERVO_SWING_PIN);
+    rotation_servo.attach(SERVO_ROTATION_PIN);
 
     /* positions */
     config->swing.angle_closed = 18;

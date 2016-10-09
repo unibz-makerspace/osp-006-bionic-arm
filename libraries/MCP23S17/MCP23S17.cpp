@@ -122,14 +122,20 @@ MCP23S17::MCP23S17(SPIClass &spi, uint8_t cs, uint8_t addr) {
  */
 void MCP23S17::begin() {
     _spi->begin();
+    uint8_t cmd = 0b01000000;
+#if (ARDUINO_PI_GPIO >= 100)
+    const int bytes = 3;
+    uint8_t data[bytes] = { cmd, IOCONA, 0x18 };
+    _spi->transfer(data, bytes);
+#else
     ::pinMode(_cs, OUTPUT);
     ::digitalWrite(_cs, HIGH);
-    uint8_t cmd = 0b01000000;
     ::digitalWrite(_cs, LOW);
     _spi->transfer(cmd);
     _spi->transfer(IOCONA);
     _spi->transfer(0x18);
     ::digitalWrite(_cs, HIGH);
+#endif
     writeAll();
 }
 
@@ -141,11 +147,18 @@ void MCP23S17::readRegister(uint8_t addr) {
         return;
     }
     uint8_t cmd = 0b01000001 | ((_addr & 0b111) << 1);
+#if (ARDUINO_PI_GPIO >= 100)
+    const int bytes = 3;
+    uint8_t data[bytes] = { cmd, addr, 0xFF };
+    _spi->transfer(data, bytes);
+    _reg[addr] = data[2];
+#else
     ::digitalWrite(_cs, LOW);
     _spi->transfer(cmd);
     _spi->transfer(addr);
     _reg[addr] = _spi->transfer(0xFF);
     ::digitalWrite(_cs, HIGH);
+#endif
 }
 
 /*! This private function writes the current value of a register (as stored in the
@@ -156,11 +169,17 @@ void MCP23S17::writeRegister(uint8_t addr) {
         return;
     }
     uint8_t cmd = 0b01000000 | ((_addr & 0b111) << 1);
+#if (ARDUINO_PI_GPIO >= 100)
+    const int bytes = 3;
+    uint8_t data[bytes] = { cmd, addr, _reg[addr] };
+    _spi->transfer(data, bytes);
+#else
     ::digitalWrite(_cs, LOW);
     _spi->transfer(cmd);
     _spi->transfer(addr);
     _spi->transfer(_reg[addr]);
     ::digitalWrite(_cs, HIGH);
+#endif
 }
 
 /*! This private function performs a bulk read on all the registers in the chip to
@@ -168,6 +187,19 @@ void MCP23S17::writeRegister(uint8_t addr) {
  */
 void MCP23S17::readAll() {
     uint8_t cmd = 0b01000001 | ((_addr & 0b111) << 1);
+#if (ARDUINO_PI_GPIO >= 100)
+    const int bytes = 2 + 22;
+    uint8_t data[bytes] = { 0 };
+    data[0] = cmd;
+    data[1] = 0;
+    for (uint8_t i = 0; i < 22; i++) {
+        data[2 + i] = 0xFF;
+    }
+    _spi->transfer(data, bytes);
+    for (uint8_t i = 0; i < 22; i++) {
+        _reg[i] = data[2 + i];
+    }
+#else
     ::digitalWrite(_cs, LOW);
     _spi->transfer(cmd);
     _spi->transfer(0);
@@ -175,6 +207,7 @@ void MCP23S17::readAll() {
         _reg[i] = _spi->transfer(0xFF);
     }
     ::digitalWrite(_cs, HIGH);
+#endif
 }
 
 /*! This private function performs a bulk write of all the data in the _reg array
@@ -183,6 +216,16 @@ void MCP23S17::readAll() {
  */
 void MCP23S17::writeAll() {
     uint8_t cmd = 0b01000000 | ((_addr & 0b111) << 1);
+#if (ARDUINO_PI_GPIO >= 100)
+    const int bytes = 2 + 22;
+    uint8_t data[bytes] = { 0 };
+    data[0] = cmd;
+    data[1] = 0;
+    for (uint8_t i = 0; i < 22; i++) {
+        data[2 + i] = _reg[i];
+    }
+    _spi->transfer(data, bytes);
+#else
     ::digitalWrite(_cs, LOW);
     _spi->transfer(cmd);
     _spi->transfer(0);
@@ -190,6 +233,7 @@ void MCP23S17::writeAll() {
         _spi->transfer(_reg[i]);
     }
     ::digitalWrite(_cs, HIGH);
+#endif
 }
     
 /*! Just like the pinMode() function of the Arduino API, this function sets the
