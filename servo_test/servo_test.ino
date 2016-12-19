@@ -307,7 +307,7 @@ void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_s
     config->rotation.angle_closed = 142;
     config->rotation.angle_open = 56;
     config->hand.angle_closed = 145;  /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
-    config->hand.angle_open = 30;      /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
+    config->hand.angle_open = 25;      /* this motor is NOT a Servo; thus the angles are just used to exploit the logic */
 
     /* timings */
     config->swing.angle_step = 2;
@@ -315,7 +315,7 @@ void arm_init(t_arm_config *config, Servo swing_servo, Servo rotation_servo, t_s
     config->rotation.angle_step = 1;
     config->rotation.angle_step_delay = 28000;
     config->hand.angle_step = 1;            /* NOTE: since the motor has no feedback, keep short steps with a short delay; increase resolution (angle_open/angle_close) if needed */
-    config->hand.angle_step_delay = 50500;  /* NOTE: since the motor has no feedback, keep short steps with a short delay; increase resolution (angle_open/angle_close) if needed */
+    config->hand.angle_step_delay = 65000;  /* NOTE: since the motor has no feedback, keep short steps with a short delay; increase resolution (angle_open/angle_close) if needed */
 
     /* configure the servo movement routine */
     arm_swing->step_val = config->swing.angle_step;
@@ -535,7 +535,7 @@ void arm_logic(uint32_t timestamp)
             break;
         case ARM_HAND_FINAL_OPEN:
             /* Open the hand */
-            arm_config.hand.angle_open = 60;
+            arm_config.hand.angle_open = 30;
             movement_open(&arm_config.hand, &hand);
             if (hand_movement_done == true)
             {
